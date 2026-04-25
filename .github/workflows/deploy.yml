@@ -58,5 +58,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          workingDirectory: cloudflare
-          command: deploy
+          command: deploy $(find . -name "worker.ts") --config $(find . -name "wrangler.toml")
