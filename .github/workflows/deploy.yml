@@ -58,4 +58,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          command: deploy cloudflare/worker.ts --name cyberchat-relay
+          workingDirectory: cloudflare
+          command: deploy
