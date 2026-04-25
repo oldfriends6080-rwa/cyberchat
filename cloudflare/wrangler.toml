@@ -16,4 +16,4 @@ kv_namespaces = [
 # RECLAIM_WEBHOOK_SECRET = "your-webhook-secret"
 
 # 生产环境限制
-limits = { cpu_ms = 50, memory_mb = 128 }
+# limits = { cpu_ms = 50, memory_mb = 128 }
