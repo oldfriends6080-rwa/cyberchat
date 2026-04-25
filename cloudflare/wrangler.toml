@@ -5,9 +5,10 @@ compatibility_flags = ["nodejs_compat"]
 
 # KV 命名空间用于临时存储 proof（声明周期 5 分钟）
 # 需在 Cloudflare Dashboard 创建并绑定
-# kv_namespaces = [
-#   { binding = "PROOF_CACHE", id = "your-kv-id" }
-# ]
+kv_namespaces = [
+  { binding = "PROOF_CACHE", id = "daeb4b8fdf7542f388f91da4a6adda91" }
+]
+
 
 # 环境变量（建议通过 Dashboard 设置）
 # [vars]
