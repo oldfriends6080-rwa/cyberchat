@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cyber-green: #00FFA3;
+  --color-cyber-dark: #1A1A1A;
+  --font-mono: 'JetBrains Mono', 'Inter', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #1A1A1A;
+  color: #00FFA3;
+  font-family: 'JetBrains Mono', 'Inter', monospace;
+}
+
+#root {
+  min-height: 100vh;
+  width: 100%;
+}
