@@ -102,10 +102,10 @@ export class ReclaimService {
     }
 
     const request = this.reclaim.requestProofs({
-      title: `CyberChat - ${type.toUpperCase()} Verification`,
-      baseCallbackUrl,
-      requestedProofs,
-      contextMessage: `Verify your ${type} identity for TrustLink`,
+       title: `CyberChat - ${type.toUpperCase()} Verification`,
+       baseCallbackUrl,
+       requestedProofs,
+       contextMessage: `Verify your ${type} identity for CyberChat`,
       contextAddress: walletAddress,
     })
 

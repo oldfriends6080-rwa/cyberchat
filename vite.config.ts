@@ -4,6 +4,10 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig(({ mode }) => ({
+  optimizeDeps: {
+    exclude: ['@xmtp/wasm-bindings', '@xmtp/browser-sdk'],
+    include: ['@xmtp/proto'],
+  },
   plugins: [react(), tailwindcss(), nodePolyfills({
     globals: {
       Buffer: true,

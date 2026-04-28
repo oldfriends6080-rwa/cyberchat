@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useXMTP } from '../providers/XMTPProvider'
+import { IdentifierKind } from '@xmtp/browser-sdk'
+import { vault } from '../vault/LocalVault'
 import { privacyShield } from './PrivacyShield'
 
 interface Message {
@@ -24,18 +26,31 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   useEffect(() => {
     if (!client || !peerAddress || !isConnected) return
 
-    const loadMessages = async () => {
-      try {
-        const conversation = await client.conversations.newConversation(peerAddress)
-        const msgs = await conversation.messages()
+     const loadMessages = async () => {
+       try {
+         const conversation = await client.conversations.fetchDmByIdentifier({
+           identifier: peerAddress,
+           identifierKind: IdentifierKind.Ethereum,
+         })
+         if (!conversation) return
 
-        const formatted = msgs.map(m => ({
-          id: m.id,
-          senderAddress: m.senderAddress,
-          content: m.content,
-          timestamp: (m as any).sent || Date.now(),
-          isOwn: m.senderAddress?.toLowerCase() === address?.toLowerCase(),
-        }))
+         // Ensure contact exists in vault
+         await vault.setContact({
+           walletAddress: peerAddress,
+           localName: `Wallet ${peerAddress.slice(0, 6)}...`,
+           verifiedBadges: [],
+           updatedAt: Date.now(),
+         })
+
+         const msgs = await conversation.messages()
+
+         const formatted = msgs.map((m: any) => ({
+           id: m.id,
+           senderAddress: m.senderAddress,
+           content: m.content,
+           timestamp: m.sent || Date.now(),
+           isOwn: m.senderAddress?.toLowerCase() === address?.toLowerCase(),
+         }))
 
         setMessages(formatted)
       } catch (err) {
@@ -50,16 +65,20 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   useEffect(() => {
     if (!client || !peerAddress) return
 
-    pollRef.current = setInterval(async () => {
-      try {
-        const conversation = await client.conversations.newConversation(peerAddress)
-        const msgs = await conversation.messages()
-        const latestTimestamp = Math.max(...messages.map(m => m.timestamp), 0)
+     pollRef.current = setInterval(async () => {
+       try {
+         const conversation = await client.conversations.fetchDmByIdentifier({
+           identifier: peerAddress,
+           identifierKind: IdentifierKind.Ethereum,
+         })
+         if (!conversation) return
+         const msgs = await conversation.messages()
+         const latestTimestamp = Math.max(...messages.map(m => m.timestamp), 0)
 
-        const newMsgs = msgs.filter((m: any) => {
-          const ts = m.sent || 0
-          return ts > latestTimestamp
-        })
+         const newMsgs = msgs.filter((m: any) => {
+           const ts = m.sent || 0
+           return ts > latestTimestamp
+         })
 
         if (newMsgs.length > 0) {
           newMsgs.forEach(async (m: any) => {
@@ -89,14 +108,21 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     }
   }, [client, peerAddress, messages])
 
-  const sendMessage = async () => {
-    if (!input.trim() || !client || sending) return
+   const sendMessage = async () => {
+     if (!input.trim() || !client || sending) return
 
-    setSending(true)
-    setError(null)
+     setSending(true)
+     setError(null)
 
     try {
-      const conversation = await client.conversations.newConversation(peerAddress)
+      const conversation = await client.conversations.fetchDmByIdentifier({
+        identifier: peerAddress,
+        identifierKind: IdentifierKind.Ethereum,
+      })
+      if (!conversation) {
+        setError('Conversation not found')
+        return
+      }
       const proof = await privacyShield.buildOutboundProof(address!)
       // @ts-ignore - XMTP supports metadata in options
       await conversation.send(input, { metadata: proof ? { 'x-cyber-proof': proof } : {} })

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useXMTP } from '../providers/XMTPProvider'
 import { vault } from '../vault/LocalVault'
-import { privacyShield } from './PrivacyShield'
+
 
 interface ContactWithProof {
   walletAddress: string
@@ -23,30 +23,25 @@ export function ChatList({ onSelectContact }: { onSelectContact: (addr: string) 
       return
     }
 
-    const loadContacts = async () => {
-      setLoading(true)
-      try {
-        const conversations = await client.conversations.list()
-        const contactPromises = conversations.map(async (conv) => {
-          const peerAddress = conv.peerAddress
-          const contact = await vault.getContact(peerAddress)
-          const proof = await privacyShield.getProofFor(peerAddress)
+     const loadContacts = async () => {
+       setLoading(true)
+       try {
+         // Try to get all stored contacts from vault
+         const allContacts = await vault.getAllContacts()
+         setContacts(allContacts.map(c => ({
+           walletAddress: c.walletAddress,
+           localName: c.localName,
+           badges: c.verifiedBadges,
+         })))
 
-          return {
-            walletAddress: peerAddress,
-            localName: contact?.localName || `${peerAddress.slice(0, 6)}...`,
-            badges: proof.badges,
-          }
-        })
-
-        const loaded = await Promise.all(contactPromises)
-        setContacts(loaded)
-      } catch (err) {
-        console.error('Failed to load contacts:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
+         // Also could populate from XMTP conversations if needed
+         // but for now rely on vault contacts
+       } catch (err) {
+         console.error('Failed to load contacts:', err)
+       } finally {
+         setLoading(false)
+       }
+     }
 
     loadContacts()
   }, [client, isConnected, address])

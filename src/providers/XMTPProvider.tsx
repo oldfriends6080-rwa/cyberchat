@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react'
-import { Client } from '@xmtp/xmtp-js'
+import { Client, IdentifierKind, type XmtpEnv } from '@xmtp/browser-sdk'
 import { useAccount, useWalletClient } from 'wagmi'
+import { hexToBytes } from 'viem'
 import { vault } from '../vault/LocalVault'
 
 interface XMTPContextType {
@@ -37,12 +38,29 @@ export function XMTPProvider({ children }: { children: ReactNode }) {
       setIsLoading(true)
       setError(null)
       try {
-        // XMTP expects an ethers.js Signer-compatible object
-        // WalletClient from Wagmi v2 works as a compatible signer in practice
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const xmtpClient = await Client.create(walletClient as any, { env: 'dev' })
+        if (!walletClient || !address) {
+          return
+        }
+
+        // Create a signer compatible with XMTP Browser SDK
+        const signer = {
+          type: 'EOA' as const,
+          getIdentifier: async () => ({
+            identifier: address,
+            identifierKind: IdentifierKind.Ethereum,
+          }),
+          signMessage: async (message: string): Promise<Uint8Array> => {
+            // message is hex string; forward to wallet for signature
+            const signature = await walletClient.signMessage({ message })
+            // Convert hex signature to Uint8Array
+            return hexToBytes(signature)
+          },
+        }
+
+        const xmtpEnv = (import.meta.env.VITE_XMTP_ENV || 'dev') as XmtpEnv
+        const xmtpClient = await Client.create(signer, { env: xmtpEnv } as any)
         if (!cancelledRef.current) {
-          setClient(xmtpClient)
+          setClient(xmtpClient as any)
           await vault.setProfile({
             id: address,
             displayName: `Wallet ${address.slice(0, 6)}...`,

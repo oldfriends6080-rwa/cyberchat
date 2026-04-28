@@ -1,4 +1,4 @@
-# CyberChat / TrustLink (MVP)
+# CyberChat
 
 > Decentralized Privacy Communication with Web2 Credit Backing
 
