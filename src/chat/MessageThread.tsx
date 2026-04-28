@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
-import { useSearchParams } from 'react-router-dom'
 import { useXMTP } from '../providers/XMTPProvider'
-import { type Identifier, IdentifierKind, Client as XMTPClient } from '@xmtp/browser-sdk'
+import { type Identifier, IdentifierKind } from '@xmtp/browser-sdk'
 import { vault } from '../vault/LocalVault'
 import { privacyShield } from './PrivacyShield'
 
@@ -17,7 +16,6 @@ interface Message {
 export function MessageThread({ peerAddress }: { peerAddress: string }) {
   const { address } = useAccount()
   const { client, isConnected } = useXMTP()
-  const [searchParams] = useSearchParams()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -31,14 +29,6 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
-
-  // Auto-select peer if opened via invite link
-  useEffect(() => {
-    const invitee = searchParams.get('invitee')
-    if (invitee && invitee.toLowerCase() === peerAddress.toLowerCase()) {
-      // This component will render the conversation; nothing else needed
-    }
-  }, [searchParams, peerAddress])
 
   // Resolve (or create) the DM conversation once per peer
   useEffect(() => {
@@ -65,9 +55,9 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           identifierKind: IdentifierKind.Ethereum,
         }
 
-        // Check peer is reachable via XMTP
+        // Check peer is reachable via XMTP using the client's network
         try {
-          const canMessageMap = await XMTPClient.canMessage([identifier])
+          const canMessageMap = await client.canMessage([identifier])
           const canReach = canMessageMap.get(peerAddress.toLowerCase())
           if (canReach === false) {
             if (!cancelled) {
