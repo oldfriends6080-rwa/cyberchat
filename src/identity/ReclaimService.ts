@@ -10,7 +10,7 @@ interface VerificationSession {
   expectedProofs: string
   type: VerificationType
   createdAt: number
-  claimId?: string // Cloudflare Worker relay claim ID
+  mode: 'mock' | 'production' // 区分轮询策略
 }
 
 export class ReclaimService {
@@ -18,10 +18,11 @@ export class ReclaimService {
   private useMock: boolean
   private relayUrl: string
 
-  constructor(useMock: boolean = true, relayUrl?: string) {
+  constructor(useMock: boolean = false, relayUrl?: string) {
     this.reclaim = new reclaimprotocol.Reclaim()
     this.useMock = useMock
     this.relayUrl = relayUrl || import.meta.env.VITE_RECLAIM_RELAY_URL || ''
+    // App ID reserved for future Reclaim SDK integration (if needed)
   }
 
   /**
@@ -31,11 +32,12 @@ export class ReclaimService {
     if (this.useMock) {
       const mockSession: VerificationSession = {
         sessionId: `mock-${Date.now()}`,
-        callbackId: `callback-${Date.now()}`,
+        callbackId: `mock-callback-${Date.now()}`,
         reclaimUrl: `https://reclaim.app/callback?mock=true&type=${type}`,
         expectedProofs: JSON.stringify([{ provider: type, field: 'verified' }]),
         type,
         createdAt: Date.now(),
+        mode: 'mock',
       }
 
       await vault.setProfile({
@@ -117,9 +119,10 @@ export class ReclaimService {
       expectedProofs: expectedProofsInCallback,
       type,
       createdAt: Date.now(),
+      mode: 'production',
     }
 
-    // 存储 session
+    // 存储 session（包含 claimId 用于后续轮询）
     await vault.setProfile({
       id: `${walletAddress}-session-${type}`,
       displayName: `session-${session.sessionId}`,
@@ -132,7 +135,7 @@ export class ReclaimService {
 
   /**
    * 轮询 Cloudflare Worker 查询 proof 是否已就绪
-   * @param claimId Cloudflare Worker 返回的 claimId
+   * @param claimId Cloudflare Worker 返回的 claimId（从 session 中提取）
    */
   async pollForProof(claimId: string): Promise<any | null> {
     if (this.useMock) {
@@ -211,7 +214,10 @@ export class ReclaimService {
   }
 }
 
-// 生产环境实例（从环境变量读取）
-const isProd = import.meta.env.MODE === 'production'
-const relayUrl = import.meta.env.VITE_RECLAIM_RELAY_URL
-export const reclaimService = new ReclaimService(!isProd, relayUrl)
+// 生产环境实例（useMock=false）
+// 根据环境决定使用 Mock 还是 Production 模式
+const isDev = import.meta.env.DEV
+export const reclaimService = new ReclaimService(
+  isDev, // DEV 模式：useMock=true（演示用）；PROD：useMock=false（真实回调）
+  isDev ? undefined : import.meta.env.VITE_RECLAIM_RELAY_URL
+)

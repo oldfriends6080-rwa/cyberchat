@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useAccount } from 'wagmi'
 import { vault } from '../vault/LocalVault'
+import { reclaimService } from '../identity/ReclaimService'
 
 type VerificationStatus = 'idle' | 'pending' | 'verifying' | 'success' | 'failed'
 
@@ -13,6 +14,7 @@ interface StatusInfo {
 export function useVerificationStatus(type: 'github' | 'amazon') {
   const { address } = useAccount()
   const [info, setInfo] = useState<StatusInfo>({ status: 'idle', message: 'Not started' })
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     if (!address) {
@@ -21,6 +23,7 @@ export function useVerificationStatus(type: 'github' | 'amazon') {
     }
 
     const checkStatus = async () => {
+      // Check credentials first
       const credentials = await vault.getCredentials(address)
       const cred = credentials.find(c => c.type === type)
 
@@ -32,33 +35,58 @@ export function useVerificationStatus(type: 'github' | 'amazon') {
         return
       }
 
+      // Check for active session
       const sessionProfile = await vault.getProfile(`${address}-session-${type}`)
       if (sessionProfile?.avatarBase64) {
         try {
           const session = JSON.parse(atob(sessionProfile.avatarBase64))
           const timeSince = Date.now() - session.createdAt
 
-          if (timeSince < 10 * 60 * 1000) { // 10 min window
+          if (timeSince < 15 * 60 * 1000) { // 15 min window
             setInfo({
               status: 'verifying',
               message: 'Waiting for proof submission...',
             })
+
             const poll = setInterval(async () => {
+              // 1. Check local vault (all modes)
               const updatedCreds = await vault.getCredentials(address)
-              if (updatedCreds.find(c => c.type === type)) {
+              const found = updatedCreds.find(c => c.type === type)
+              if (found) {
                 setInfo({ status: 'success', message: `${type.toUpperCase()} verified!` })
-                clearInterval(poll)
+                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+                return
               }
-            }, 2000)
+
+              // 2. Production mode: poll Cloudflare Worker
+              if (session.mode === 'production' && session.callbackId) {
+                const result = await reclaimService.pollForProof(session.callbackId)
+                if (result?.proofs) {
+                  const extracted = reclaimService.extractValues(session.expectedProofs, result.proofs)
+                  await reclaimService.saveVerifiedProof(address, type, result.proofs[0], extracted)
+                  setInfo({ status: 'success', message: `${type.toUpperCase()} verified!` })
+                  if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+                }
+              }
+              // Mock mode relies on setTimeout auto-save
+            }, 3000)
+
+            pollIntervalRef.current = poll
             return
           }
-        } catch { /* malformed session */ }
+        } catch (err) {
+          console.error('Session parse error:', err)
+        }
       }
 
       setInfo({ status: 'idle', message: 'Ready to verify' })
     }
 
     checkStatus()
+
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+    }
   }, [address, type])
 
   return info

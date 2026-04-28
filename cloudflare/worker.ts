@@ -17,7 +17,7 @@ export default {
     // CORS 头部
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, X-Wallet-Signature',
     }
 
@@ -35,21 +35,22 @@ export default {
         // 实际生产应验证 Reclaim 的 JWT 或 signed payload
 
         // 2. 缓存 proof 到 KV（5分钟 TTL）
-        const cacheKey = `proof:${callbackId}:${sessionId}`
+        // 直接使用 callbackId 作为 cache key（最简设计）
         if (env.PROOF_CACHE) {
-          await env.PROOF_CACHE.put(cacheKey, JSON.stringify({
+          await env.PROOF_CACHE.put(callbackId, JSON.stringify({
             proofs,
             receivedAt: Date.now(),
             signer,
+            sessionId,
           }), {
             expirationTtl: 300 // 5 minutes
           })
         }
 
-        // 3. 返回前端可轮询的 claimId
+        // 3. 返回前端可轮询的 claimId（即 callbackId 本身）
         return new Response(JSON.stringify({
           status: 'received',
-          claimId: cacheKey,
+          claimId: callbackId,
           message: 'Proof stored. Frontend should poll /proof-status with claimId.',
         }), {
           status: 200,
