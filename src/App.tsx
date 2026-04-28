@@ -22,19 +22,23 @@ function Navbar() {
   return (
     <nav className="border-b border-[#00FFA3]/20 p-2">
       <div className="flex justify-center space-x-4">
-        {links.map(link => (
-          <Link
-            key={link.to}
-            to={link.to}
-            className={`px-4 py-2 text-sm font-mono transition-colors ${
-              location.pathname === link.to
-                ? 'text-[#00FFA3] border-b-2 border-[#00FFA3]'
-                : 'text-gray-400 hover:text-[#00FFA3]'
-            }`}
-          >
-            {link.label}
-          </Link>
-        ))}
+        {links.map(link => {
+          // Check if current path matches this link (handles basename)
+          const isActive = location.pathname.endsWith(link.to)
+          return (
+            <Link
+              key={link.to}
+              to={link.to}
+              className={`px-4 py-2 text-sm font-mono transition-colors ${
+                isActive
+                  ? 'text-[#00FFA3] border-b-2 border-[#00FFA3]'
+                  : 'text-gray-400 hover:text-[#00FFA3]'
+              }`}
+            >
+              {link.label}
+            </Link>
+          )
+        })}
       </div>
     </nav>
   )
@@ -44,7 +48,7 @@ function App() {
   return (
     <Web3Provider>
       <XMTPProvider>
-        <BrowserRouter>
+        <BrowserRouter basename="/cyberchat">
           <div className="app min-h-screen bg-[#1A1A1A] text-[#00FFA3] font-mono">
             <Routes>
               <Route path="/" element={<LandingPage />} />
