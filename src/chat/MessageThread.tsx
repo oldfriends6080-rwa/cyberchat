@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
+import { useSearchParams } from 'react-router-dom'
 import { useXMTP } from '../providers/XMTPProvider'
 import { type Identifier, IdentifierKind, Client as XMTPClient } from '@xmtp/browser-sdk'
 import { vault } from '../vault/LocalVault'
