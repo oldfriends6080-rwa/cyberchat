@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
+import { useSearchParams } from 'react-router-dom'
 import { useXMTP } from '../providers/XMTPProvider'
 import { ChatList } from '../chat/ChatList'
 import { MessageThread } from '../chat/MessageThread'
@@ -9,7 +10,16 @@ import type { Contact } from '../vault/LocalVault'
 export function ChatRoom() {
   const { isConnected: isWalletConnected } = useAccount()
   const { isConnected, isLoading, error } = useXMTP()
+  const [searchParams] = useSearchParams()
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null)
+
+  // Auto-select invitee if a deep link with ?invitee=0x... was used
+  useEffect(() => {
+    const invitee = searchParams.get('invitee')
+    if (invitee && isConnected) {
+      setSelectedPeer(invitee)
+    }
+  }, [searchParams, isConnected])
 
   if (!isWalletConnected) {
     return (

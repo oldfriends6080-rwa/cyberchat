@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useXMTP } from '../providers/XMTPProvider'
-import { IdentifierKind } from '@xmtp/browser-sdk'
+import { type Identifier, IdentifierKind, Client as XMTPClient } from '@xmtp/browser-sdk'
 import { vault } from '../vault/LocalVault'
 import { privacyShield } from './PrivacyShield'
 
@@ -16,11 +16,13 @@ interface Message {
 export function MessageThread({ peerAddress }: { peerAddress: string }) {
   const { address } = useAccount()
   const { client, isConnected } = useXMTP()
+  const [searchParams] = useSearchParams()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loadingConversation, setLoadingConversation] = useState(true)
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null)
   const conversationRef = useRef<any>(null)
   const messagesRef = useRef<Message[]>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -28,6 +30,14 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
+
+  // Auto-select peer if opened via invite link
+  useEffect(() => {
+    const invitee = searchParams.get('invitee')
+    if (invitee && invitee.toLowerCase() === peerAddress.toLowerCase()) {
+      // This component will render the conversation; nothing else needed
+    }
+  }, [searchParams, peerAddress])
 
   // Resolve (or create) the DM conversation once per peer
   useEffect(() => {
@@ -49,31 +59,35 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           updatedAt: Date.now(),
         })
 
-        // Check peer is reachable via XMTP
-        const canMessageMap = await (client.conversations as any).canMessage?.([
-          { identifier: peerAddress, identifierKind: IdentifierKind.Ethereum },
-        ]).catch(() => null)
+        const identifier: Identifier = {
+          identifier: peerAddress,
+          identifierKind: IdentifierKind.Ethereum,
+        }
 
-        if (canMessageMap) {
-          const canReach = Array.from(canMessageMap.values())[0]
+        // Check peer is reachable via XMTP
+        try {
+          const canMessageMap = await XMTPClient.canMessage([identifier])
+          const canReach = canMessageMap.get(peerAddress.toLowerCase())
           if (canReach === false) {
-            if (!cancelled) setError('This address has not registered on XMTP yet')
+            if (!cancelled) {
+              setError('This address has not registered on XMTP yet')
+              // Generate invitation deep link
+              const origin = window.location.origin.replace(/\/$/, '')
+              const inviteUrl = `${origin}/cyberchat/chat?invitee=${encodeURIComponent(peerAddress)}`
+              setInviteUrl(inviteUrl)
+            }
             return
           }
+        } catch (err) {
+          console.warn('canMessage check failed:', err)
         }
 
         // Try to fetch existing DM
-        let conversation: any = await client.conversations.fetchDmByIdentifier({
-          identifier: peerAddress,
-          identifierKind: IdentifierKind.Ethereum,
-        }).catch(() => null)
+        let conversation = await client.conversations.fetchDmByIdentifier(identifier).catch(() => null)
 
-        // Create a new DM if none exists
+        // Create a new DM if none exists using createDmWithIdentifier
         if (!conversation) {
-          conversation = await (client.conversations as any).newDmWithIdentifier?.({
-            identifier: peerAddress,
-            identifierKind: IdentifierKind.Ethereum,
-          })
+          conversation = await client.conversations.createDmWithIdentifier(identifier)
         }
 
         if (!conversation) {
@@ -161,7 +175,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     setError(null)
 
     try {
-      await conversation.send(input)
+      await conversation.sendText(input)
 
       const newMsg: Message = {
         id: `local-${Date.now()}`,
@@ -199,6 +213,10 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           <div className="p-3 bg-red-900/30 border border-red-500 rounded text-red-400 text-center">
             {error}
           </div>
+        )}
+
+        {inviteUrl && (
+          <InviteLink url={inviteUrl} />
         )}
 
         {loadingConversation && !error && (
@@ -245,6 +263,43 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
             {sending ? '...' : 'Send'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function InviteLink({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const copy = () => {
+    navigator.clipboard.writeText(url)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(err => {
+        console.error('Failed to copy:', err)
+      })
+  }
+
+  return (
+    <div className="mt-4 p-3 bg-[#111] border border-amber-500/50 rounded text-xs">
+      <p className="text-amber-400 mb-2">
+        This user hasn't registered on XMTP yet. Copy the invite link below and share it via email, Discord, or any app. When they open it and connect their wallet, you can start chatting.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          readOnly
+          value={url}
+          className="flex-1 bg-[#1A1A1A] border border-[#00FFA3]/20 rounded px-2 py-1.5 font-mono text-[10px] text-gray-300 truncate"
+          onClick={e => e.currentTarget.select()}
+        />
+        <button
+          onClick={copy}
+          className="px-3 py-1.5 bg-amber-600 text-white font-bold text-xs rounded hover:bg-amber-500"
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
       </div>
     </div>
   )
