@@ -93,7 +93,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         const formatted = msgs.map((m: any) => ({
           id: m.id,
           senderAddress: m.senderAddress ?? m.senderInboxId ?? '',
-          content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
+          content: decodeMessageContent(m),
           timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
           isOwn: (m.senderAddress ?? '').toLowerCase() === address?.toLowerCase(),
         }))
@@ -138,7 +138,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           setMessages(prev => [...prev, {
             id: m.id,
             senderAddress: sender,
-            content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
+            content: decodeMessageContent(m),
             timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
             isOwn: sender.toLowerCase() === address?.toLowerCase(),
           }])
@@ -259,6 +259,23 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   )
 }
 
+function decodeMessageContent(m: any): string {
+  // XMTP v7: content may already be a string (for text), or an object (encoded content)
+  if (typeof m.content === 'string') {
+    return m.content
+  }
+  // If content is an object with a 'text' field, use that
+  if (m.content?.text) {
+    return String(m.content.text)
+  }
+  // Fallback: stringify safely
+  try {
+    return JSON.stringify(m.content)
+  } catch {
+    return String(m.content ?? '')
+  }
+}
+
 function InviteLink({ url }: { url: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -296,7 +313,7 @@ function InviteLink({ url }: { url: string }) {
   )
 }
 
-function BadgeDisplay({ peerAddress }: { peerAddress: string }) {
+ function BadgeDisplay({ peerAddress }: { peerAddress: string }) {
   const [badges, setBadges] = useState<string[]>([])
   const [loaded, setLoaded] = useState(false)
 

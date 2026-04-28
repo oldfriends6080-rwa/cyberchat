@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { useSearchParams } from 'react-router-dom'
 import { useXMTP } from '../providers/XMTPProvider'
 import { ChatList } from '../chat/ChatList'
@@ -25,7 +26,7 @@ export function ChatRoom() {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8 space-y-6">
         <h2 className="text-2xl font-bold">Connect your wallet to chat</h2>
-        <p className="text-gray-400 text-sm">Use the Connect button in the top right corner</p>
+        <ConnectButton />
       </div>
     )
   }
