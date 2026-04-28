@@ -86,7 +86,26 @@ class LocalVault {
 
   async getContact(walletAddress: string): Promise<Contact | undefined> {
     await this.init()
-    return this.db!.get('contacts', walletAddress.toLowerCase())
+    const key = walletAddress.toLowerCase()
+    // Try exact lowercase key first (fast path)
+    let contact = await this.db!.get('contacts', key)
+    if (contact) {
+      return { ...contact, walletAddress: key }
+    }
+    // Fallback: scan all contacts for case-insensitive match (handles legacy mixed-case keys)
+    const all = await this.db!.getAll('contacts')
+    const found = all.find(c => c.walletAddress.toLowerCase() === key)
+    if (found) {
+      // Normalize and re-save to prevent future duplicates
+      const normalized = { ...found, walletAddress: key }
+      await this.db!.put('contacts', normalized)
+      // Also delete the old mixed-case key if different
+      if (found.walletAddress !== key) {
+        await this.db!.delete('contacts', found.walletAddress)
+      }
+      return normalized
+    }
+    return undefined
   }
 
   async setContact(contact: Contact): Promise<void> {
@@ -97,7 +116,20 @@ class LocalVault {
 
   async getAllContacts(): Promise<Contact[]> {
     await this.init()
-    return this.db!.getAll('contacts')
+    const all = await this.db!.getAll('contacts')
+    // Deduplicate by lowercase walletAddress (in case old mixed-case keys exist)
+    const seen = new Set<string>()
+    const unique: Contact[] = []
+    for (const c of all) {
+      const key = c.walletAddress.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        unique.push({ ...c, walletAddress: key })
+      }
+    }
+    // Sort by localName for stable UI ordering
+    unique.sort((a, b) => a.localName.localeCompare(b.localName))
+    return unique
   }
 
   async getCredentials(walletAddress: string): Promise<Credential[]> {
