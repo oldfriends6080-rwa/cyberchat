@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { Web3Provider } from './providers/Web3Provider'
 import { XMTPProvider } from './providers/XMTPProvider'
 import { LandingPage } from './components/LandingPage'
@@ -9,7 +10,7 @@ import { useAccount } from 'wagmi'
 
 function Navbar() {
   const location = useLocation()
-  const { isConnected } = useAccount()
+  const { isConnected, address } = useAccount()
 
   if (!isConnected) return null
 
@@ -21,24 +22,31 @@ function Navbar() {
 
   return (
     <nav className="border-b border-[#00FFA3]/20 p-2">
-      <div className="flex justify-center space-x-4">
-        {links.map(link => {
-          // Check if current path matches this link (handles basename)
-          const isActive = location.pathname.endsWith(link.to)
-          return (
-            <Link
-              key={link.to}
-              to={link.to}
-              className={`px-4 py-2 text-sm font-mono transition-colors ${
-                isActive
-                  ? 'text-[#00FFA3] border-b-2 border-[#00FFA3]'
-                  : 'text-gray-400 hover:text-[#00FFA3]'
-              }`}
-            >
-              {link.label}
-            </Link>
-          )
-        })}
+      <div className="flex justify-between items-center px-4">
+        <div className="flex space-x-4">
+          {links.map(link => {
+            const isActive = location.pathname.endsWith(link.to)
+            return (
+              <Link
+                key={link.to}
+                to={link.to}
+                className={`px-4 py-2 text-sm font-mono transition-colors ${
+                  isActive
+                    ? 'text-[#00FFA3] border-b-2 border-[#00FFA3]'
+                    : 'text-gray-400 hover:text-[#00FFA3]'
+                }`}
+              >
+                {link.label}
+              </Link>
+            )
+          })}
+        </div>
+        <div className="flex items-center space-x-3">
+          <span className="text-xs text-gray-400 font-mono">
+            {address?.slice(0, 6)}...{address?.slice(-4)}
+          </span>
+          <ConnectButton />
+        </div>
       </div>
     </nav>
   )

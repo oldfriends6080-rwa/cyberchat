@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useAccount } from 'wagmi'
-import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { useXMTP } from '../providers/XMTPProvider'
 import { ChatList } from '../chat/ChatList'
 import { MessageThread } from '../chat/MessageThread'
@@ -14,7 +13,7 @@ export function ChatRoom() {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8 space-y-6">
         <h2 className="text-2xl font-bold">Connect your wallet to chat</h2>
-        <ConnectButton />
+        <p className="text-gray-400 text-sm">Use the Connect button in the top right corner</p>
       </div>
     )
   }
@@ -36,10 +35,7 @@ export function ChatRoom() {
       {/* Left sidebar: Contact list */}
       <aside className="w-80 border-r border-[#00FFA3]/20 flex flex-col">
         <div className="p-4 border-b border-[#00FFA3]/20 space-y-3">
-          <div className="flex justify-between items-center">
-            <h2 className="font-bold text-lg">Contacts</h2>
-            <ConnectButton />
-          </div>
+          <h2 className="font-bold text-lg">Contacts</h2>
           <p className="text-xs text-gray-400">Green = verified identity</p>
           <NewChatInput onSelectContact={setSelectedPeer} />
         </div>
