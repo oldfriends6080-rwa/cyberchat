@@ -90,13 +90,19 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         conversationRef.current = conversation
 
         const msgs = await conversation.messages()
-        const formatted = msgs.map((m: any) => ({
-          id: m.id,
-          senderAddress: m.senderAddress ?? m.senderInboxId ?? '',
-          content: decodeMessageContent(m),
-          timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
-          isOwn: (m.senderAddress ?? '').toLowerCase() === address?.toLowerCase(),
-        }))
+        const formatted: Message[] = msgs
+          .map((m: any) => {
+            const content = decodeMessageContent(m)
+            if (content === null) return null
+            return {
+              id: m.id,
+              senderAddress: m.senderAddress ?? m.senderInboxId ?? '',
+              content,
+              timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
+              isOwn: (m.senderAddress ?? '').toLowerCase() === address?.toLowerCase(),
+            }
+          })
+          .filter((msg): msg is Message => msg !== null)
 
         if (!cancelled) setMessages(formatted)
       } catch (err) {
@@ -128,6 +134,9 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         })
 
         for (const m of newMsgs) {
+          const content = decodeMessageContent(m)
+          if (content === null) continue
+
           const sender = m.senderAddress ?? ''
           const allowed = await privacyShield.shouldAcceptInbound(sender)
           if (!allowed) {
@@ -138,7 +147,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           setMessages(prev => [...prev, {
             id: m.id,
             senderAddress: sender,
-            content: decodeMessageContent(m),
+            content,
             timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
             isOwn: sender.toLowerCase() === address?.toLowerCase(),
           }])
@@ -259,20 +268,34 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   )
 }
 
-function decodeMessageContent(m: any): string {
-  // XMTP v7: content may already be a string (for text), or an object (encoded content)
+function decodeMessageContent(m: any): string | null {
+  // XMTP v7: content may be a string (text) or an object (encoded/system message)
+
+  // 1. Direct string → user text message
   if (typeof m.content === 'string') {
     return m.content
   }
-  // If content is an object with a 'text' field, use that
-  if (m.content?.text) {
+
+  // 2. If content is null/undefined, skip
+  if (!m.content) {
+    return null
+  }
+
+  // 3. System messages have a 'type' field and no 'text' — skip them
+  if (m.content.type && !m.content.text) {
+    return null
+  }
+
+  // 4. Content object with 'text' field → user text message
+  if (m.content.text !== undefined) {
     return String(m.content.text)
   }
-  // Fallback: stringify safely
+
+  // 5. Fallback: try to stringify (should rarely happen)
   try {
     return JSON.stringify(m.content)
   } catch {
-    return String(m.content ?? '')
+    return String(m.content)
   }
 }
 
