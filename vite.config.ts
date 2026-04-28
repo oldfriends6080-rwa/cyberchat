@@ -16,18 +16,18 @@ export default defineConfig(({ mode }) => ({
     sourcemap: mode === 'development',
     rollupOptions: {
       treeshake: {
-        moduleSideEffects: false,
+        // 强制 reflect-metadata 保留副作用（防止被 tree-shake）
+        moduleSideEffects: (id) => {
+          return /node_modules[\\/]reflect-metadata/.test(id)
+        },
       },
       output: {
-        // GitHub Pages SPA fallback: 所有路由重定向到 index.html
         entryFileNames: `assets/[name]-[hash].js`,
         chunkFileNames: `assets/[name]-[hash].js`,
         assetFileNames: `assets/[name]-[hash].[ext]`,
       },
     },
   },
-  // XMTP WASM 库路径修复
   assetsInclude: ['**/*.wasm'],
-  // 生产环境使用相对路径（SPA 部署）
   base: mode === 'production' ? '/cyberchat/' : '/',
 }))
