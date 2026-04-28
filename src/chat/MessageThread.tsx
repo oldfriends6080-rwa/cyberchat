@@ -20,83 +20,123 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadingConversation, setLoadingConversation] = useState(true)
+  const conversationRef = useRef<any>(null)
+  const messagesRef = useRef<Message[]>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Load initial messages
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+
+  // Resolve (or create) the DM conversation once per peer
   useEffect(() => {
     if (!client || !peerAddress || !isConnected) return
+    let cancelled = false
 
-     const loadMessages = async () => {
-       try {
-         const conversation = await client.conversations.fetchDmByIdentifier({
-           identifier: peerAddress,
-           identifierKind: IdentifierKind.Ethereum,
-         })
-         if (!conversation) return
+    const resolveConversation = async () => {
+      setLoadingConversation(true)
+      setError(null)
+      conversationRef.current = null
+      setMessages([])
 
-         // Ensure contact exists in vault
-         await vault.setContact({
-           walletAddress: peerAddress,
-           localName: `Wallet ${peerAddress.slice(0, 6)}...`,
-           verifiedBadges: [],
-           updatedAt: Date.now(),
-         })
+      try {
+        // Ensure contact exists in vault
+        await vault.setContact({
+          walletAddress: peerAddress,
+          localName: `Wallet ${peerAddress.slice(0, 6)}...${peerAddress.slice(-4)}`,
+          verifiedBadges: [],
+          updatedAt: Date.now(),
+        })
 
-         const msgs = await conversation.messages()
+        // Check peer is reachable via XMTP
+        const canMessageMap = await (client.conversations as any).canMessage?.([
+          { identifier: peerAddress, identifierKind: IdentifierKind.Ethereum },
+        ]).catch(() => null)
 
-         const formatted = msgs.map((m: any) => ({
-           id: m.id,
-           senderAddress: m.senderAddress,
-           content: m.content,
-           timestamp: m.sent || Date.now(),
-           isOwn: m.senderAddress?.toLowerCase() === address?.toLowerCase(),
-         }))
+        if (canMessageMap) {
+          const canReach = Array.from(canMessageMap.values())[0]
+          if (canReach === false) {
+            if (!cancelled) setError('This address has not registered on XMTP yet')
+            return
+          }
+        }
 
-        setMessages(formatted)
+        // Try to fetch existing DM
+        let conversation: any = await client.conversations.fetchDmByIdentifier({
+          identifier: peerAddress,
+          identifierKind: IdentifierKind.Ethereum,
+        }).catch(() => null)
+
+        // Create a new DM if none exists
+        if (!conversation) {
+          conversation = await (client.conversations as any).newDmWithIdentifier?.({
+            identifier: peerAddress,
+            identifierKind: IdentifierKind.Ethereum,
+          })
+        }
+
+        if (!conversation) {
+          if (!cancelled) setError('Could not open a conversation with this address')
+          return
+        }
+
+        if (cancelled) return
+        conversationRef.current = conversation
+
+        const msgs = await conversation.messages()
+        const formatted = msgs.map((m: any) => ({
+          id: m.id,
+          senderAddress: m.senderAddress ?? m.senderInboxId ?? '',
+          content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
+          timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
+          isOwn: (m.senderAddress ?? '').toLowerCase() === address?.toLowerCase(),
+        }))
+
+        if (!cancelled) setMessages(formatted)
       } catch (err) {
-        console.error('Failed to load messages:', err)
+        console.error('Failed to open conversation:', err)
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to open conversation')
+      } finally {
+        if (!cancelled) setLoadingConversation(false)
       }
     }
 
-    loadMessages()
+    resolveConversation()
+    return () => { cancelled = true }
   }, [client, peerAddress, isConnected, address])
 
-  // Poll for new messages every 3 seconds
+  // Poll for new messages every 3 seconds (stable - no messages dep)
   useEffect(() => {
     if (!client || !peerAddress) return
 
-     pollRef.current = setInterval(async () => {
-       try {
-         const conversation = await client.conversations.fetchDmByIdentifier({
-           identifier: peerAddress,
-           identifierKind: IdentifierKind.Ethereum,
-         })
-         if (!conversation) return
-         const msgs = await conversation.messages()
-         const latestTimestamp = Math.max(...messages.map(m => m.timestamp), 0)
+    pollRef.current = setInterval(async () => {
+      const conversation = conversationRef.current
+      if (!conversation) return
+      try {
+        const msgs = await conversation.messages()
+        const latestTimestamp = Math.max(...messagesRef.current.map(m => m.timestamp), 0)
 
-         const newMsgs = msgs.filter((m: any) => {
-           const ts = m.sent || 0
-           return ts > latestTimestamp
-         })
+        const newMsgs = msgs.filter((m: any) => {
+          const ts = Number(m.sent ?? m.sentNs ?? 0)
+          return ts > latestTimestamp
+        })
 
-        if (newMsgs.length > 0) {
-          newMsgs.forEach(async (m: any) => {
-            const allowed = await privacyShield.shouldAcceptInbound(m.senderAddress)
-            if (!allowed) {
-              console.warn('Blocked message from unverified sender')
-              setError('Blocked: Sender must be verified')
-              return
-            }
+        for (const m of newMsgs) {
+          const sender = m.senderAddress ?? ''
+          const allowed = await privacyShield.shouldAcceptInbound(sender)
+          if (!allowed) {
+            console.warn('Blocked message from unverified sender')
+            continue
+          }
 
-            setMessages(prev => [...prev, {
-              id: m.id,
-              senderAddress: m.senderAddress,
-              content: m.content,
-              timestamp: m.sent || Date.now(),
-              isOwn: false,
-            }])
-          })
+          setMessages(prev => [...prev, {
+            id: m.id,
+            senderAddress: sender,
+            content: typeof m.content === 'string' ? m.content : String(m.content ?? ''),
+            timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
+            isOwn: sender.toLowerCase() === address?.toLowerCase(),
+          }])
         }
       } catch (err) {
         console.error('Poll error:', err)
@@ -106,26 +146,22 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [client, peerAddress, messages])
+  }, [client, peerAddress, address])
 
-   const sendMessage = async () => {
-     if (!input.trim() || !client || sending) return
+  const sendMessage = async () => {
+    if (!input.trim() || !client || sending) return
 
-     setSending(true)
-     setError(null)
+    const conversation = conversationRef.current
+    if (!conversation) {
+      setError('Conversation not ready yet')
+      return
+    }
+
+    setSending(true)
+    setError(null)
 
     try {
-      const conversation = await client.conversations.fetchDmByIdentifier({
-        identifier: peerAddress,
-        identifierKind: IdentifierKind.Ethereum,
-      })
-      if (!conversation) {
-        setError('Conversation not found')
-        return
-      }
-      const proof = await privacyShield.buildOutboundProof(address!)
-      // @ts-ignore - XMTP supports metadata in options
-      await conversation.send(input, { metadata: proof ? { 'x-cyber-proof': proof } : {} })
+      await conversation.send(input)
 
       const newMsg: Message = {
         id: `local-${Date.now()}`,
@@ -165,6 +201,10 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           </div>
         )}
 
+        {loadingConversation && !error && (
+          <div className="text-center text-gray-400 text-sm">Opening secure conversation...</div>
+        )}
+
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -193,13 +233,13 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            placeholder="Type a message..."
+            placeholder={loadingConversation ? 'Connecting...' : 'Type a message...'}
             className="flex-1 bg-[#1A1A1A] border border-[#00FFA3]/30 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#00FFA3]"
-            disabled={sending}
+            disabled={sending || loadingConversation}
           />
           <button
             onClick={sendMessage}
-            disabled={sending || !input.trim()}
+            disabled={sending || loadingConversation || !input.trim()}
             className="px-4 py-2 bg-[#00FFA3] text-black font-bold rounded disabled:opacity-50"
           >
             {sending ? '...' : 'Send'}
@@ -210,16 +250,34 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   )
 }
 
-async function BadgeDisplay({ peerAddress }: { peerAddress: string }) {
-  const proof = await privacyShield.getProofFor(peerAddress)
+function BadgeDisplay({ peerAddress }: { peerAddress: string }) {
+  const [badges, setBadges] = useState<string[]>([])
+  const [loaded, setLoaded] = useState(false)
 
-  if (proof.badges.length === 0) {
+  useEffect(() => {
+    let cancelled = false
+    privacyShield.getProofFor(peerAddress)
+      .then(proof => {
+        if (!cancelled) {
+          setBadges(proof.badges)
+          setLoaded(true)
+        }
+      })
+      .catch(err => {
+        console.error('Failed to load badges:', err)
+        if (!cancelled) setLoaded(true)
+      })
+    return () => { cancelled = true }
+  }, [peerAddress])
+
+  if (!loaded) return null
+  if (badges.length === 0) {
     return <span className="text-xs text-gray-500">Unverified</span>
   }
 
   return (
     <div className="flex gap-1">
-      {proof.badges.map(badge => (
+      {badges.map(badge => (
         <span
           key={badge}
           className="text-xs px-2 py-0.5 bg-[#00FFA3]/10 border border-[#00FFA3]/30 rounded"

@@ -81,7 +81,7 @@ class LocalVault {
 
   async setProfile(profile: Profile): Promise<void> {
     await this.init()
-    await this.db!.put('profiles', profile)
+    await this.db!.put('profiles', profile, profile.id)
   }
 
   async getContact(walletAddress: string): Promise<Contact | undefined> {
@@ -107,7 +107,7 @@ class LocalVault {
 
   async addCredential(credential: Credential): Promise<void> {
     await this.init()
-    await this.db!.put('credentials', credential)
+    await this.db!.put('credentials', credential, credential.id)
   }
 
   async removeCredential(walletAddress: string, type: string): Promise<void> {

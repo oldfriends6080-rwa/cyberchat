@@ -104,10 +104,25 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
       })
     : contacts
 
-  const handleSelect = (addr: string) => {
+  const handleSelect = async (addr: string) => {
     setInput('')
     setShowDropdown(false)
     setHighlightedIndex(-1)
+    // Persist new contact (no-op if already exists, keeps existing badges)
+    try {
+      const existing = await vault.getContact(addr)
+      if (!existing) {
+        await vault.setContact({
+          walletAddress: addr,
+          localName: `Wallet ${addr.slice(0, 6)}...${addr.slice(-4)}`,
+          verifiedBadges: [],
+          updatedAt: Date.now(),
+        })
+        loadContacts()
+      }
+    } catch (err) {
+      console.error('Failed to save contact:', err)
+    }
     onSelectContact(addr)
   }
 
