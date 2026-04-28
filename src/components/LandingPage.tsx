@@ -1,13 +1,23 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAccount } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 export function LandingPage() {
+  const navigate = useNavigate()
+  const { isConnected } = useAccount()
   const [index, setIndex] = useState(0)
   const texts = [
     'Verify your Taobao 88VIP',
     'Prove your Google employment',
     'Protect your privacy',
   ]
+
+  useEffect(() => {
+    if (isConnected) {
+      navigate('/chat', { replace: true })
+    }
+  }, [isConnected, navigate])
 
   useEffect(() => {
     const timer = setInterval(() => {
