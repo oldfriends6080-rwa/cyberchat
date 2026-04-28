@@ -86,12 +86,13 @@ class LocalVault {
 
   async getContact(walletAddress: string): Promise<Contact | undefined> {
     await this.init()
-    return this.db!.get('contacts', walletAddress)
+    return this.db!.get('contacts', walletAddress.toLowerCase())
   }
 
   async setContact(contact: Contact): Promise<void> {
     await this.init()
-    await this.db!.put('contacts', contact)
+    const normalized = { ...contact, walletAddress: contact.walletAddress.toLowerCase() }
+    await this.db!.put('contacts', normalized)
   }
 
   async getAllContacts(): Promise<Contact[]> {

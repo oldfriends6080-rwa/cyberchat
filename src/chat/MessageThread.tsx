@@ -53,6 +53,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     if (!client || !peerAddress || !isConnected) return
     let cancelled = false
     myInboxIdRef.current = null // reset inbox cache when peer changes
+    const currentClient = client
 
     const resolveConversation = async () => {
       setLoadingConversation(true)
@@ -76,7 +77,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
 
         // Check peer is reachable via XMTP using the client's network
         try {
-          const canMessageMap = await client.canMessage([identifier])
+          const canMessageMap = await currentClient.canMessage([identifier])
           const canReach = canMessageMap.get(peerAddress.toLowerCase())
           if (canReach === false) {
             if (!cancelled) {
@@ -93,11 +94,11 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         }
 
         // Try to fetch existing DM
-        let conversation = await client.conversations.fetchDmByIdentifier(identifier).catch(() => null)
+        let conversation = await currentClient.conversations.fetchDmByIdentifier(identifier).catch(() => null)
 
         // Create a new DM if none exists using createDmWithIdentifier
         if (!conversation) {
-          conversation = await client.conversations.createDmWithIdentifier(identifier)
+          conversation = await currentClient.conversations.createDmWithIdentifier(identifier)
         }
 
         if (!conversation) {
@@ -108,17 +109,9 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         if (cancelled) return
         conversationRef.current = conversation
 
-        // Resolve inbox IDs for accurate ownership detection
-        if (!myInboxIdRef.current && address) {
-          try {
-            const fetched = await client.fetchInboxIdByIdentifier({
-              identifier: address,
-              identifierKind: IdentifierKind.Ethereum,
-            })
-            myInboxIdRef.current = fetched ?? null
-          } catch (e) {
-            console.warn('Failed to fetch own inboxId:', e)
-          }
+        // Cache our own inbox ID for ownership detection
+        if (!myInboxIdRef.current && currentClient) {
+          myInboxIdRef.current = currentClient.inboxId!
         }
 
         const msgs = await conversation.messages()
@@ -339,33 +332,61 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
 }
 
 function decodeMessageContent(m: any): string | null {
-  // XMTP v7: content may be a string (text) or an object (encoded/system message)
+  // XMTP v7 DecodedMessageContent union: { type: "...", content: ... }
+  const content = m.content
+  if (!content) return null
 
-  // 1. Direct string → user text message
-  if (typeof m.content === 'string') {
-    return m.content
+  // 1. Text messages: { type: "text", content: string }
+  if (content.type === 'text' && typeof content.content === 'string') {
+    return content.content
   }
 
-  // 2. If content is null/undefined, skip
-  if (!m.content) {
+  // 2. Markdown: { type: "markdown", content: string }
+  if (content.type === 'markdown' && typeof content.content === 'string') {
+    return content.content
+  }
+
+  // 3. System/conversation events — skip from chat display
+  // These have types that are not user-facing messages
+  const systemTypes = [
+    'ConversationUpdated',
+    'ConsentUpdated',
+    'GroupUpdated',
+    'GroupCreated',
+    'GroupMemberAdded',
+    'GroupMemberRemoved',
+    'GroupRoleSet',
+    'GroupAdminAdded',
+    'GroupAdminRemoved',
+    'GroupSuperAdminAdded',
+    'GroupSuperAdminRemoved',
+    'GroupNameSet',
+    'GroupImageSetSet',
+    'GroupDescriptionSet',
+    'GroupDeleted',
+    'MessageDeleted',
+    'ReadReceipt',
+    'Reaction',
+    'Reply',
+    'Attachment',
+    'RemoteAttachment',
+    'MultiRemoteAttachment',
+    'TransactionReference',
+    'WalletSendCalls',
+    'Actions',
+    'Intent',
+    'deletedMessage',
+    'leaveRequest',
+  ]
+  if (content.type && systemTypes.includes(content.type)) {
     return null
   }
 
-  // 3. System messages: have 'type' but no 'text' — skip from chat display
-  if (m.content.type && !m.content.text) {
-    return null
-  }
-
-  // 4. Content object with 'text' field → user text message
-  if (m.content.text !== undefined) {
-    return String(m.content.text)
-  }
-
-  // 5. Fallback: try to stringify (should rarely happen)
+  // 4. Unknown content type — as fallback, stringify (for debugging)
   try {
-    return JSON.stringify(m.content)
+    return JSON.stringify(content)
   } catch {
-    return String(m.content)
+    return '[unreadable message]'
   }
 }
 
