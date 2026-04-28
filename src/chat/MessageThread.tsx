@@ -28,6 +28,23 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
 
   useEffect(() => {
     messagesRef.current = messages
+    // Cleanup: remove any system messages that might have slipped through
+    const hasSystem = messages.some(m =>
+      typeof m.content === 'string' &&
+      m.content.trim().startsWith('{') &&
+      m.content.includes('"type"')
+    )
+    if (hasSystem) {
+      const cleaned = messages.filter(m => {
+        if (typeof m.content !== 'string') return true
+        const trimmed = m.content.trim()
+        if (trimmed.startsWith('{') && trimmed.includes('"type"')) return false
+        return true
+      })
+      if (cleaned.length !== messages.length) {
+        setMessages(cleaned)
+      }
+    }
   }, [messages])
 
   // Resolve (or create) the DM conversation once per peer
@@ -223,25 +240,51 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           <div className="text-center text-gray-400 text-sm">Opening secure conversation...</div>
         )}
 
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex ${msg.isOwn ? 'justify-end' : 'justify-start'}`}
-          >
+        {messages.map((msg) => {
+          // Detect system messages that slipped through: JSON-like content with 'type' field
+          let looksLikeSystem = false
+          if (typeof msg.content === 'string' && !msg.isOwn) {
+            const trimmed = msg.content.trim()
+            if (trimmed.startsWith('{') && trimmed.includes('"type"')) {
+              looksLikeSystem = true
+            }
+          }
+
+          return (
             <div
-              className={`max-w-[70%] p-3 rounded-lg ${
-                msg.isOwn
-                  ? 'bg-[#00FFA3] text-black'
-                  : 'bg-[#1A1A1A] border border-[#00FFA3]/20'
-              }`}
+              key={msg.id}
+              className={`flex ${looksLikeSystem ? 'justify-center' : msg.isOwn ? 'justify-end' : 'justify-start'}`}
             >
-              <div className="text-sm">{msg.content}</div>
-              <div className={`text-xs mt-1 ${msg.isOwn ? 'text-black/60' : 'text-gray-500'}`}>
-                {new Date(msg.timestamp).toLocaleTimeString()}
-              </div>
+              {looksLikeSystem ? (
+                <div className="px-3 py-1 bg-[#111] border border-[#00FFA3]/10 rounded-full">
+                  <span className="text-xs text-gray-500">
+                    {(() => {
+                      try {
+                        const parsed = JSON.parse(msg.content)
+                        return getSystemMessageLabel(parsed)
+                      } catch {
+                        return 'System event'
+                      }
+                    })()}
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className={`max-w-[70%] p-3 rounded-lg ${
+                    msg.isOwn
+                      ? 'bg-[#00FFA3] text-black'
+                      : 'bg-[#1A1A1A] border border-[#00FFA3]/20'
+                  }`}
+                >
+                  <div className="text-sm">{msg.content}</div>
+                  <div className={`text-xs mt-1 ${msg.isOwn ? 'text-black/60' : 'text-gray-500'}`}>
+                    {new Date(msg.timestamp).toLocaleTimeString()}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       <div className="p-4 border-t border-[#00FFA3]/20">
@@ -281,7 +324,7 @@ function decodeMessageContent(m: any): string | null {
     return null
   }
 
-  // 3. System messages have a 'type' field and no 'text' — skip them
+  // 3. System messages: have 'type' but no 'text' — skip from chat display
   if (m.content.type && !m.content.text) {
     return null
   }
@@ -296,6 +339,21 @@ function decodeMessageContent(m: any): string | null {
     return JSON.stringify(m.content)
   } catch {
     return String(m.content)
+  }
+}
+
+// Get a human-readable label for system messages
+function getSystemMessageLabel(content: any): string {
+  const type = content?.type
+  switch (type) {
+    case 'ConversationUpdated':
+      return 'Conversation started'
+    case 'ConsentUpdated':
+      return 'Consent updated'
+    case 'GroupUpdated':
+      return 'Group updated'
+    default:
+      return `System: ${type ?? 'unknown'}`
   }
 }
 
