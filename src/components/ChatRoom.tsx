@@ -69,21 +69,20 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
   const [contacts, setContacts] = useState<Contact[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const loadContacts = () => {
+    vault.getAllContacts().then(setContacts).catch(console.error)
+  }
 
   useEffect(() => {
-    vault.getAllContacts().then(setContacts).catch(console.error)
+    loadContacts()
   }, [])
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node) &&
-        inputRef.current &&
-        !inputRef.current.contains(e.target as Node)
-      ) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
         setShowDropdown(false)
       }
     }
@@ -91,18 +90,19 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const isFullAddress = input.trim().startsWith('0x') && input.trim().length === 42
+  const trimmed = input.trim()
+  const isFullAddress = trimmed.startsWith('0x') && trimmed.length === 42
 
-  const matches = input.trim().length > 0
+  const matches = trimmed.length > 0
     ? contacts.filter(c => {
-        const q = input.trim().toLowerCase()
-        return (
-          c.walletAddress.toLowerCase().includes(q) ||
-          c.localName.toLowerCase().includes(q) ||
-          c.walletAddress.slice(-4).toLowerCase() === q
-        )
+        const q = trimmed.toLowerCase()
+        const addr = c.walletAddress.toLowerCase()
+        if (addr.includes(q)) return true
+        if (c.localName.toLowerCase().includes(q)) return true
+        if (q.length >= 2 && addr.endsWith(q)) return true
+        return false
       })
-    : []
+    : contacts
 
   const handleSelect = (addr: string) => {
     setInput('')
@@ -112,10 +112,14 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
   }
 
   const handleSubmit = () => {
-    const addr = input.trim()
-    if (!addr) return
-    if (!addr.startsWith('0x') || addr.length !== 42) return
-    handleSelect(addr)
+    if (!trimmed) return
+    if (highlightedIndex >= 0 && highlightedIndex < matches.length) {
+      handleSelect(matches[highlightedIndex].walletAddress)
+      return
+    }
+    if (isFullAddress) {
+      handleSelect(trimmed)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -127,18 +131,14 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
       setHighlightedIndex(prev => Math.max(prev - 1, -1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (highlightedIndex >= 0 && highlightedIndex < matches.length) {
-        handleSelect(matches[highlightedIndex].walletAddress)
-      } else {
-        handleSubmit()
-      }
+      handleSubmit()
     } else if (e.key === 'Escape') {
       setShowDropdown(false)
     }
   }
 
   return (
-    <div className="relative space-y-1">
+    <div ref={wrapperRef} className="relative">
       <div className="flex gap-2">
         <input
           ref={inputRef}
@@ -151,38 +151,39 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
           }}
           onFocus={() => setShowDropdown(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Name or 0x... (last 4 digits)"
+          placeholder="Name or last 4 digits"
           className="flex-1 bg-[#111] border border-[#00FFA3]/30 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-[#00FFA3]"
         />
         <button
           onClick={handleSubmit}
-          disabled={!isFullAddress}
+          disabled={!isFullAddress && !(highlightedIndex >= 0 && highlightedIndex < matches.length)}
           className="px-3 py-1.5 bg-[#00FFA3] text-black font-bold text-xs rounded hover:bg-[#00FFA3]/80 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Chat
         </button>
       </div>
 
-      {showDropdown && matches.length > 0 && (
-        <div
-          ref={dropdownRef}
-          className="absolute z-50 w-full mt-1 bg-[#111] border border-[#00FFA3]/30 rounded max-h-48 overflow-y-auto"
-        >
-          {matches.map((contact, i) => (
-            <button
-              key={contact.walletAddress}
-              onClick={() => handleSelect(contact.walletAddress)}
-              onMouseEnter={() => setHighlightedIndex(i)}
-              className={`w-full px-3 py-2 text-left text-xs hover:bg-[#00FFA3]/10 ${
-                i === highlightedIndex ? 'bg-[#00FFA3]/10' : ''
-              }`}
-            >
-              <div className="font-bold text-[#00FFA3]">{contact.localName}</div>
-              <div className="text-gray-400">
-                {contact.walletAddress.slice(0, 6)}...{contact.walletAddress.slice(-4)}
-              </div>
-            </button>
-          ))}
+      {showDropdown && trimmed.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#1a1a1a] border border-[#00FFA3]/30 rounded max-h-48 overflow-y-auto shadow-lg">
+          {matches.length > 0 ? (
+            matches.map((contact, i) => (
+              <button
+                key={contact.walletAddress}
+                onClick={() => handleSelect(contact.walletAddress)}
+                onMouseEnter={() => setHighlightedIndex(i)}
+                className={`w-full px-3 py-2 text-left text-xs hover:bg-[#00FFA3]/10 ${
+                  i === highlightedIndex ? 'bg-[#00FFA3]/10' : ''
+                }`}
+              >
+                <div className="font-bold text-[#00FFA3]">{contact.localName}</div>
+                <div className="text-gray-400">
+                  {contact.walletAddress.slice(0, 6)}...{contact.walletAddress.slice(-4)}
+                </div>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-xs text-gray-500">No matching contacts</div>
+          )}
         </div>
       )}
     </div>
