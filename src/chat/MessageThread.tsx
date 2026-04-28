@@ -25,6 +25,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   const conversationRef = useRef<any>(null)
   const messagesRef = useRef<Message[]>([])
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const myInboxIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     messagesRef.current = messages
@@ -51,6 +52,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   useEffect(() => {
     if (!client || !peerAddress || !isConnected) return
     let cancelled = false
+    myInboxIdRef.current = null // reset inbox cache when peer changes
 
     const resolveConversation = async () => {
       setLoadingConversation(true)
@@ -106,17 +108,37 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         if (cancelled) return
         conversationRef.current = conversation
 
+        // Resolve inbox IDs for accurate ownership detection
+        if (!myInboxIdRef.current && address) {
+          try {
+            const fetched = await client.fetchInboxIdByIdentifier({
+              identifier: address,
+              identifierKind: IdentifierKind.Ethereum,
+            })
+            myInboxIdRef.current = fetched ?? null
+          } catch (e) {
+            console.warn('Failed to fetch own inboxId:', e)
+          }
+        }
+
         const msgs = await conversation.messages()
+        const myEthAddr = address?.toLowerCase() ?? ''
+        const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
+
         const formatted: Message[] = msgs
           .map((m: any) => {
             const content = decodeMessageContent(m)
             if (content === null) return null
+            const senderEth = (m.senderAddress ?? '').toLowerCase()
+            const senderInbox = (m.senderInboxId ?? '').toLowerCase()
+            // isOwn if sender matches us by address OR by inboxId
+            const isOwn = senderEth === myEthAddr || senderInbox === myInbox
             return {
               id: m.id,
-              senderAddress: m.senderAddress ?? m.senderInboxId ?? '',
+              senderAddress: (m.senderAddress ?? m.senderInboxId ?? '') as string,
               content,
               timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
-              isOwn: (m.senderAddress ?? '').toLowerCase() === address?.toLowerCase(),
+              isOwn,
             }
           })
           .filter((msg): msg is Message => msg !== null)
@@ -154,8 +176,13 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
           const content = decodeMessageContent(m)
           if (content === null) continue
 
-          const sender = m.senderAddress ?? ''
-          const allowed = await privacyShield.shouldAcceptInbound(sender)
+          const senderEth = (m.senderAddress ?? '').toLowerCase()
+          const senderInbox = (m.senderInboxId ?? '').toLowerCase()
+          const myEthAddr = address?.toLowerCase() ?? ''
+          const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
+          const isOwn = senderEth === myEthAddr || senderInbox === myInbox
+
+          const allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
           if (!allowed) {
             console.warn('Blocked message from unverified sender')
             continue
@@ -163,10 +190,10 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
 
           setMessages(prev => [...prev, {
             id: m.id,
-            senderAddress: sender,
+            senderAddress: (m.senderAddress ?? m.senderInboxId ?? '') as string,
             content,
             timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
-            isOwn: sender.toLowerCase() === address?.toLowerCase(),
+            isOwn,
           }])
         }
       } catch (err) {
