@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useXMTP } from '../providers/XMTPProvider'
 import { ChatList } from '../chat/ChatList'
 import { MessageThread } from '../chat/MessageThread'
+import { vault } from '../vault/LocalVault'
+import type { Contact } from '../vault/LocalVault'
 
 export function ChatRoom() {
   const { isConnected: isWalletConnected } = useAccount()
@@ -64,42 +66,125 @@ export function ChatRoom() {
 
 function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => void }) {
   const [input, setInput] = useState('')
-  const [error, setError] = useState('')
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [showDropdown, setShowDropdown] = useState(false)
+  const [highlightedIndex, setHighlightedIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const handleStartChat = () => {
-    const addr = input.trim()
-    if (!addr) {
-      setError('Enter a wallet address')
-      return
+  useEffect(() => {
+    vault.getAllContacts().then(setContacts).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(e.target as Node)
+      ) {
+        setShowDropdown(false)
+      }
     }
-    if (!addr.startsWith('0x') || addr.length !== 42) {
-      setError('Invalid Ethereum address')
-      return
-    }
-    setError('')
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const isFullAddress = input.trim().startsWith('0x') && input.trim().length === 42
+
+  const matches = input.trim().length > 0
+    ? contacts.filter(c => {
+        const q = input.trim().toLowerCase()
+        return (
+          c.walletAddress.toLowerCase().includes(q) ||
+          c.localName.toLowerCase().includes(q) ||
+          c.walletAddress.slice(-4).toLowerCase() === q
+        )
+      })
+    : []
+
+  const handleSelect = (addr: string) => {
     setInput('')
+    setShowDropdown(false)
+    setHighlightedIndex(-1)
     onSelectContact(addr)
   }
 
+  const handleSubmit = () => {
+    const addr = input.trim()
+    if (!addr) return
+    if (!addr.startsWith('0x') || addr.length !== 42) return
+    handleSelect(addr)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightedIndex(prev => Math.min(prev + 1, matches.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightedIndex(prev => Math.max(prev - 1, -1))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (highlightedIndex >= 0 && highlightedIndex < matches.length) {
+        handleSelect(matches[highlightedIndex].walletAddress)
+      } else {
+        handleSubmit()
+      }
+    } else if (e.key === 'Escape') {
+      setShowDropdown(false)
+    }
+  }
+
   return (
-    <div className="space-y-1">
+    <div className="relative space-y-1">
       <div className="flex gap-2">
         <input
+          ref={inputRef}
           type="text"
           value={input}
-          onChange={(e) => { setInput(e.target.value); setError('') }}
-          onKeyDown={(e) => e.key === 'Enter' && handleStartChat()}
-          placeholder="0x... address"
+          onChange={(e) => {
+            setInput(e.target.value)
+            setShowDropdown(true)
+            setHighlightedIndex(-1)
+          }}
+          onFocus={() => setShowDropdown(true)}
+          onKeyDown={handleKeyDown}
+          placeholder="Name or 0x... (last 4 digits)"
           className="flex-1 bg-[#111] border border-[#00FFA3]/30 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-[#00FFA3]"
         />
         <button
-          onClick={handleStartChat}
-          className="px-3 py-1.5 bg-[#00FFA3] text-black font-bold text-xs rounded hover:bg-[#00FFA3]/80"
+          onClick={handleSubmit}
+          disabled={!isFullAddress}
+          className="px-3 py-1.5 bg-[#00FFA3] text-black font-bold text-xs rounded hover:bg-[#00FFA3]/80 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Chat
         </button>
       </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+
+      {showDropdown && matches.length > 0 && (
+        <div
+          ref={dropdownRef}
+          className="absolute z-50 w-full mt-1 bg-[#111] border border-[#00FFA3]/30 rounded max-h-48 overflow-y-auto"
+        >
+          {matches.map((contact, i) => (
+            <button
+              key={contact.walletAddress}
+              onClick={() => handleSelect(contact.walletAddress)}
+              onMouseEnter={() => setHighlightedIndex(i)}
+              className={`w-full px-3 py-2 text-left text-xs hover:bg-[#00FFA3]/10 ${
+                i === highlightedIndex ? 'bg-[#00FFA3]/10' : ''
+              }`}
+            >
+              <div className="font-bold text-[#00FFA3]">{contact.localName}</div>
+              <div className="text-gray-400">
+                {contact.walletAddress.slice(0, 6)}...{contact.walletAddress.slice(-4)}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
