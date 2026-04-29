@@ -148,49 +148,48 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
 
       try {
         // Stream all messages using client.conversations.streamAllMessages
-        const stream = await client.conversations.streamAllMessages(
-          async (msg: any) => {
-            if (cancelled) return
-            if (msg.conversationId !== conversationRef.current?.id) return
-
-            const content = decodeMessageContent(msg)
-            if (content === null) return
-
-            const senderEth = (msg.senderAddress ?? '').toLowerCase()
-            const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
-            const myEthAddr = address?.toLowerCase() ?? ''
-            const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
-            const isOwn = senderEth === myEthAddr || senderInbox === myInbox
-            if (isOwn) return
-
-            let allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
-            if (!allowed) {
-              try {
-                await vault.setContact({
-                  walletAddress: senderEth || senderInbox,
-                  localName: `Wallet ${(senderEth || senderInbox).slice(0, 6)}...`,
-                  verifiedBadges: [],
-                  updatedAt: Date.now(),
-                })
-                allowed = true
-              } catch (e) {
-                console.warn('Failed to auto-add sender:', e)
-              }
-            }
-            if (!allowed) return
-
-            setMessages(prev => [...prev, {
-              id: msg.id,
-              senderAddress: msg.senderAddress ?? msg.senderInboxId ?? '',
-              content,
-              timestamp: Number(msg.sent ?? msg.sentNs ?? Date.now()),
-              isOwn,
-            }])
-          },
-          () => {},
-          { conversationType: 0 } // DM only
-        )
+        const stream = await client.conversations.streamAllMessages({
+          conversationType: 0, // DM only
+        })
         streamRef.current = stream
+
+        for await (const msg of stream) {
+          if (cancelled) break
+          if (msg.conversationId !== conversationRef.current?.id) continue
+
+          const content = decodeMessageContent(msg)
+          if (content === null) continue
+
+          const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
+          const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
+          const isOwn = senderInbox === myInbox
+          if (isOwn) continue
+
+          // Auto-add unknown contacts to allow first message
+          let allowed = await privacyShield.shouldAcceptInbound(senderInbox)
+          if (!allowed) {
+            try {
+              await vault.setContact({
+                walletAddress: senderInbox,
+                localName: `Wallet ${senderInbox.slice(0, 6)}...`,
+                verifiedBadges: [],
+                updatedAt: Date.now(),
+              })
+              allowed = true
+            } catch (e) {
+              console.warn('Failed to auto-add sender:', e)
+            }
+          }
+          if (!allowed) continue
+
+          setMessages(prev => [...prev, {
+            id: msg.id,
+            senderAddress: msg.senderInboxId ?? '',
+            content,
+            timestamp: Number(Number(msg.sentAtNs) / 1_000_000), // convert ns to ms
+            isOwn,
+          }])
+        }
 
         for await (const msg of stream) {
           if (cancelled) break
