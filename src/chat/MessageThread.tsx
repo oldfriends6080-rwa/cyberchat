@@ -25,7 +25,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   const conversationRef = useRef<any>(null)
   const messagesRef = useRef<Message[]>([])
   const myInboxIdRef = useRef<string | null>(null)
-  const streamRef = useRef<{ stop: () => void } | null>(null)
+  const streamRef = useRef<any>(null)
 
   useEffect(() => {
     messagesRef.current = messages
@@ -79,9 +79,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
         // Create a new DM if none exists using createDmWithIdentifier
         if (!conversation) {
           try {
-            conversation = await currentClient.conversations.createDmWithIdentifier(identifier, {
-              conversationType: 0, // DM
-            })
+            conversation = await currentClient.conversations.createDmWithIdentifier(identifier)
           } catch (createErr) {
             console.error('DM createDmWithIdentifier failed:', createErr)
             throw createErr
@@ -98,7 +96,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
 
         // Cache our own inbox ID for ownership detection
         if (!myInboxIdRef.current) {
-          myInboxIdRef.current = currentClient.inboxId
+          myInboxIdRef.current = currentClient.inboxId!
         }
 
         // Load initial messages
@@ -146,53 +144,57 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     let cancelled = false
 
     const startStreaming = async () => {
-      const conversation = conversationRef.current
-      if (!conversation) return
+      if (!conversationRef.current) return
 
       try {
-        const streamCloser = await (conversation as any).stream(
-          async (msg: any) => {
-            if (cancelled) return
+        // Stream all messages using client.streamAllMessages (Promise-based API)
+        const stream = await client.streamAllMessages({
+          conversationType: 0, // DM only
+        })
+        streamRef.current = stream
 
-            const content = decodeMessageContent(msg)
-            if (content === null) return
+        for await (const msg of stream) {
+          if (cancelled) break
 
-            const senderEth = (msg.senderAddress ?? '').toLowerCase()
-            const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
-            const myEthAddr = address?.toLowerCase() ?? ''
-            const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
-            const isOwn = senderEth === myEthAddr || senderInbox === myInbox
+          // Only process messages for our target conversation
+          if (msg.conversationId !== conversationRef.current?.id) continue
 
-            if (isOwn) return
+          const content = decodeMessageContent(msg)
+          if (content === null) continue
 
-            // Auto-add unknown contacts to allow first message
-            let allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
-            if (!allowed) {
-              try {
-                await vault.setContact({
-                  walletAddress: senderEth || senderInbox,
-                  localName: `Wallet ${(senderEth || senderInbox).slice(0, 6)}...`,
-                  verifiedBadges: [],
-                  updatedAt: Date.now(),
-                })
-                allowed = true
-              } catch (e) {
-                console.warn('Failed to auto-add sender:', e)
-              }
+          const senderEth = (msg.senderAddress ?? '').toLowerCase()
+          const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
+          const myEthAddr = address?.toLowerCase() ?? ''
+          const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
+          const isOwn = senderEth === myEthAddr || senderInbox === myInbox
+
+          if (isOwn) continue
+
+          // Auto-add unknown contacts to allow first message
+          let allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
+          if (!allowed) {
+            try {
+              await vault.setContact({
+                walletAddress: senderEth || senderInbox,
+                localName: `Wallet ${(senderEth || senderInbox).slice(0, 6)}...`,
+                verifiedBadges: [],
+                updatedAt: Date.now(),
+              })
+              allowed = true
+            } catch (e) {
+              console.warn('Failed to auto-add sender:', e)
             }
-            if (!allowed) return
+          }
+          if (!allowed) continue
 
-            setMessages(prev => [...prev, {
-              id: msg.id,
-              senderAddress: msg.senderAddress ?? msg.senderInboxId ?? '',
-              content,
-              timestamp: Number(msg.sent ?? msg.sentNs ?? Date.now()),
-              isOwn,
-            }])
-          },
-          () => {}
-        )
-        streamRef.current = streamCloser
+          setMessages(prev => [...prev, {
+            id: msg.id,
+            senderAddress: msg.senderAddress ?? msg.senderInboxId ?? '',
+            content,
+            timestamp: Number(msg.sent ?? msg.sentNs ?? Date.now()),
+            isOwn,
+          }])
+        }
       } catch (err) {
         console.error('Stream error:', err)
       }
@@ -203,7 +205,7 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     return () => {
       cancelled = true
       if (streamRef.current) {
-        streamRef.current.stop()
+        streamRef.current.end().catch(console.error)
         streamRef.current = null
       }
     }
