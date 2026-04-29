@@ -24,8 +24,9 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
   const [inviteUrl, setInviteUrl] = useState<string | null>(null)
   const conversationRef = useRef<any>(null)
   const messagesRef = useRef<Message[]>([])
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const myInboxIdRef = useRef<string | null>(null)
+  const streamRef = useRef<{ stop: () => void } | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     messagesRef.current = messages
@@ -149,53 +150,118 @@ export function MessageThread({ peerAddress }: { peerAddress: string }) {
     return () => { cancelled = true }
   }, [client, peerAddress, isConnected, address])
 
-  // Poll for new messages every 3 seconds (stable - no messages dep)
+  // Real-time message streaming using XMTP
   useEffect(() => {
     if (!client || !peerAddress) return
 
-    pollRef.current = setInterval(async () => {
+    let cancelled = false
+
+    const startStreaming = async () => {
       const conversation = conversationRef.current
       if (!conversation) return
+
       try {
-        const msgs = await conversation.messages()
-        const latestTimestamp = Math.max(...messagesRef.current.map(m => m.timestamp), 0)
+        // Use XMTP's stream() method for real-time message delivery
+        // It returns a StreamCloser with a stop() method
+        const streamCloser = await (conversation as any).stream(
+          async (msg: any) => {
+            if (cancelled) return
 
-        const newMsgs = msgs.filter((m: any) => {
-          const ts = Number(m.sent ?? m.sentNs ?? 0)
-          return ts > latestTimestamp
-        })
+            const content = decodeMessageContent(msg)
+            if (content === null) return
 
-        for (const m of newMsgs) {
-          const content = decodeMessageContent(m)
-          if (content === null) continue
+            const senderEth = (msg.senderAddress ?? '').toLowerCase()
+            const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
+            const myEthAddr = address?.toLowerCase() ?? ''
+            const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
+            const isOwn = senderEth === myEthAddr || senderInbox === myInbox
 
-          const senderEth = (m.senderAddress ?? '').toLowerCase()
-          const senderInbox = (m.senderInboxId ?? '').toLowerCase()
-          const myEthAddr = address?.toLowerCase() ?? ''
-          const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
-          const isOwn = senderEth === myEthAddr || senderInbox === myInbox
+            // Skip own messages (already displayed when sent)
+            if (isOwn) return
 
-          const allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
+          // Check if sender is allowed by privacy shield
+          let allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
+          if (!allowed) {
+            // Auto-add unknown sender as contact to allow first message
+            // (privacy shield will treat new contacts as allowed by default)
+            try {
+              await vault.setContact({
+                walletAddress: senderEth || senderInbox,
+                localName: `Wallet ${(senderEth || senderInbox).slice(0, 6)}...`,
+                verifiedBadges: [],
+                updatedAt: Date.now(),
+              })
+              allowed = true
+            } catch (e) {
+              console.warn('Failed to auto-add sender as contact:', e)
+            }
+          }
           if (!allowed) {
             console.warn('Blocked message from unverified sender')
-            continue
+            return
           }
 
-          setMessages(prev => [...prev, {
-            id: m.id,
-            senderAddress: (m.senderAddress ?? m.senderInboxId ?? '') as string,
-            content,
-            timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
-            isOwn,
-          }])
-        }
+            setMessages(prev => [...prev, {
+              id: msg.id,
+              senderAddress: (msg.senderAddress ?? msg.senderInboxId ?? '') as string,
+              content,
+              timestamp: Number(msg.sent ?? msg.sentNs ?? Date.now()),
+              isOwn,
+            }])
+          },
+          () => { /* onFail callback - stream will auto-restart */ }
+        )
+        streamRef.current = streamCloser
       } catch (err) {
-        console.error('Poll error:', err)
+        if (!cancelled) {
+          console.error('Stream error, falling back to polling:', err)
+          // Fallback: simple interval poll
+          pollRef.current = setInterval(async () => {
+            const conv = conversationRef.current
+            if (!conv) return
+            try {
+              const msgs = await conv.messages()
+              const latest = Math.max(...messagesRef.current.map(m => m.timestamp), 0)
+              const newMsgs = msgs.filter((m: any) => Number(m.sent ?? m.sentNs ?? 0) > latest)
+              for (const m of newMsgs) {
+                const content = decodeMessageContent(m)
+                if (content === null) continue
+                const senderEth = (m.senderAddress ?? '').toLowerCase()
+                const senderInbox = (m.senderInboxId ?? '').toLowerCase()
+                const myEthAddr = address?.toLowerCase() ?? ''
+                const myInbox = (myInboxIdRef.current ?? '').toLowerCase()
+                const isOwn = senderEth === myEthAddr || senderInbox === myInbox
+                if (isOwn) continue
+                const allowed = await privacyShield.shouldAcceptInbound(senderEth || senderInbox)
+                if (!allowed) continue
+                setMessages(prev => [...prev, {
+                  id: m.id,
+                  senderAddress: (m.senderAddress ?? m.senderInboxId ?? '') as string,
+                  content,
+                  timestamp: Number(m.sent ?? m.sentNs ?? Date.now()),
+                  isOwn,
+                }])
+              }
+            } catch (e) {
+              console.error('Poll fallback error:', e)
+            }
+          }, 2000)
+        }
       }
-    }, 3000)
+    }
+
+    startStreaming()
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+      cancelled = true
+      if (streamRef.current) {
+        streamRef.current.stop()
+        streamRef.current = null
+      }
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
     }
   }, [client, peerAddress, address])
 
