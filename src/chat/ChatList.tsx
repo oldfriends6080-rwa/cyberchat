@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useXMTP } from '../providers/XMTPProvider'
 import { vault } from '../vault/LocalVault'
-
 
 interface ContactWithProof {
   walletAddress: string
@@ -10,11 +9,30 @@ interface ContactWithProof {
   badges: string[]
 }
 
-export function ChatList({ onSelectContact }: { onSelectContact: (addr: string) => void }) {
+export function ChatList({ onSelectContact, refreshKey }: {
+  onSelectContact: (addr: string) => void
+  refreshKey?: number
+}) {
   const { address } = useAccount()
   const { client, isConnected } = useXMTP()
   const [contacts, setContacts] = useState<ContactWithProof[]>([])
   const [loading, setLoading] = useState(true)
+  const streamRef = useRef<{ end: () => void } | null>(null)
+
+  const loadContacts = async () => {
+    try {
+      const allContacts = await vault.getAllContacts()
+      setContacts(allContacts.map(c => ({
+        walletAddress: c.walletAddress,
+        localName: c.localName,
+        badges: c.verifiedBadges,
+      })))
+    } catch (err) {
+      console.error('Failed to load contacts:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!isConnected || !address || !client) {
@@ -22,29 +40,58 @@ export function ChatList({ onSelectContact }: { onSelectContact: (addr: string) 
       setLoading(false)
       return
     }
-
-     const loadContacts = async () => {
-       setLoading(true)
-       try {
-         // Try to get all stored contacts from vault
-         const allContacts = await vault.getAllContacts()
-         setContacts(allContacts.map(c => ({
-           walletAddress: c.walletAddress,
-           localName: c.localName,
-           badges: c.verifiedBadges,
-         })))
-
-         // Also could populate from XMTP conversations if needed
-         // but for now rely on vault contacts
-       } catch (err) {
-         console.error('Failed to load contacts:', err)
-       } finally {
-         setLoading(false)
-       }
-     }
-
     loadContacts()
-  }, [client, isConnected, address])
+  }, [client, isConnected, address, refreshKey])
+
+  // Stream new DM conversations to auto-discover contacts
+  useEffect(() => {
+    if (!client || !isConnected) return
+    let cancelled = false
+
+    const startDmStream = async () => {
+      try {
+        streamRef.current = (client.conversations as any).streamDms(
+          async (conversation: any) => {
+            if (cancelled) return
+            try {
+              // Get the other member's inbox ID
+              const members = await conversation.members()
+              const myInbox = client.inboxId
+              const otherMember = members.find((m: any) => m.inboxId !== myInbox)
+              if (otherMember && otherMember.identifier) {
+                const peerAddr = otherMember.identifier.toLowerCase()
+                const existing = await vault.getContact(peerAddr)
+                if (!existing) {
+                  await vault.setContact({
+                    walletAddress: peerAddr,
+                    localName: `Wallet ${peerAddr.slice(0, 6)}...${peerAddr.slice(-4)}`,
+                    verifiedBadges: [],
+                    updatedAt: Date.now(),
+                  })
+                  loadContacts()
+                }
+              }
+            } catch (e) {
+              console.warn('Error processing new DM:', e)
+            }
+          },
+          () => {},
+        )
+      } catch (err) {
+        console.warn('streamDms failed:', err)
+      }
+    }
+
+    startDmStream()
+
+    return () => {
+      cancelled = true
+      if (streamRef.current) {
+        streamRef.current.end()
+        streamRef.current = null
+      }
+    }
+  }, [client, isConnected])
 
   const getBadgeIcon = (type: string) => {
     switch (type) {

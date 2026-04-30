@@ -10,9 +10,11 @@ import type { Contact } from '../vault/LocalVault'
 
 export function ChatRoom() {
   const { isConnected: isWalletConnected } = useAccount()
-  const { isConnected, isLoading, error } = useXMTP()
+  const { client, isConnected, isLoading, error } = useXMTP()
   const [searchParams] = useSearchParams()
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null)
+  const [contactRefreshKey, setContactRefreshKey] = useState(0)
+  const allMessagesStreamRef = useRef<{ end: () => void } | null>(null)
 
   // Auto-select invitee if a deep link with ?invitee=0x... was used
   useEffect(() => {
@@ -21,6 +23,56 @@ export function ChatRoom() {
       setSelectedPeer(invitee)
     }
   }, [searchParams, isConnected])
+
+  // Global listener: catch ALL inbound DM messages and auto-add senders
+  useEffect(() => {
+    if (!client || !isConnected) return
+    let cancelled = false
+
+    const startGlobalStream = async () => {
+      try {
+        allMessagesStreamRef.current = (client.conversations as any).streamAllMessages(
+          async (msg: any) => {
+            if (cancelled) return
+
+            const content = msg.content
+            if (!content || !content.type) return
+            if (content.type !== 'text' && content.type !== 'markdown') return
+
+            const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
+            if (!senderInbox) return
+            if (senderInbox === client.inboxId?.toLowerCase()) return
+
+            // Auto-add sender as contact so they appear in the sidebar
+            const existing = await vault.getContact(senderInbox).catch(() => undefined)
+            if (!existing) {
+              await vault.setContact({
+                walletAddress: senderInbox,
+                localName: `Wallet ${senderInbox.slice(0, 6)}...${senderInbox.slice(-4)}`,
+                verifiedBadges: [],
+                updatedAt: Date.now(),
+              })
+              setContactRefreshKey(k => k + 1)
+            }
+          },
+          () => {},
+          0, // DM only
+        )
+      } catch (err) {
+        console.warn('Global message stream failed:', err)
+      }
+    }
+
+    startGlobalStream()
+
+    return () => {
+      cancelled = true
+      if (allMessagesStreamRef.current) {
+        allMessagesStreamRef.current.end()
+        allMessagesStreamRef.current = null
+      }
+    }
+  }, [client, isConnected])
 
   if (!isWalletConnected) {
     return (
@@ -53,7 +105,7 @@ export function ChatRoom() {
           <NewChatInput onSelectContact={setSelectedPeer} />
         </div>
         <div className="flex-1 overflow-y-auto">
-          <ChatList onSelectContact={setSelectedPeer} />
+          <ChatList onSelectContact={setSelectedPeer} refreshKey={contactRefreshKey} />
         </div>
       </aside>
 
@@ -119,7 +171,6 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
     setInput('')
     setShowDropdown(false)
     setHighlightedIndex(-1)
-    // Persist new contact (no-op if already exists, keeps existing badges)
     try {
       const existing = await vault.getContact(addr)
       if (!existing) {
