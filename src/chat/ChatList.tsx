@@ -50,7 +50,7 @@ export function ChatList({ onSelectContact, refreshKey }: {
 
     const startDmStream = async () => {
       try {
-        streamRef.current = (client.conversations as any).streamDms(
+        streamRef.current = await (client.conversations as any).streamDms(
           async (conversation: any) => {
             if (cancelled) return
             try {
@@ -87,7 +87,7 @@ export function ChatList({ onSelectContact, refreshKey }: {
     return () => {
       cancelled = true
       if (streamRef.current) {
-        streamRef.current.end()
+        try { streamRef.current.end() } catch (e) { /* ignore */ }
         streamRef.current = null
       }
     }

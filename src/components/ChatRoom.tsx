@@ -32,7 +32,7 @@ export function ChatRoom() {
 
     const startGlobalStream = async () => {
       try {
-        allMessagesStreamRef.current = (client.conversations as any).streamAllMessages(
+        allMessagesStreamRef.current = await (client.conversations as any).streamAllMessages(
           async (msg: any) => {
             if (cancelled) return
             const content = msg.content
@@ -72,7 +72,7 @@ export function ChatRoom() {
     return () => {
       cancelled = true
       if (allMessagesStreamRef.current) {
-        allMessagesStreamRef.current.end()
+        try { allMessagesStreamRef.current.end() } catch (e) { /* ignore */ }
         allMessagesStreamRef.current = null
       }
     }
