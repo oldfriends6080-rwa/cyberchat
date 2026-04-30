@@ -14,9 +14,9 @@ export function ChatRoom() {
   const [searchParams] = useSearchParams()
   const [selectedPeer, setSelectedPeer] = useState<string | null>(null)
   const [contactRefreshKey, setContactRefreshKey] = useState(0)
+  const [msgPush, setMsgPush] = useState<{ peer: string; ts: number } | null>(null)
   const allMessagesStreamRef = useRef<{ end: () => void } | null>(null)
 
-  // Auto-select invitee if a deep link with ?invitee=0x... was used
   useEffect(() => {
     const invitee = searchParams.get('invitee')
     if (invitee && isConnected) {
@@ -24,26 +24,25 @@ export function ChatRoom() {
     }
   }, [searchParams, isConnected])
 
-  // Global listener: catch ALL inbound DM messages and auto-add senders
+  // Single global stream: catches ALL DM messages and routes them
   useEffect(() => {
     if (!client || !isConnected) return
     let cancelled = false
+    const myInbox = client.inboxId?.toLowerCase() ?? ''
 
     const startGlobalStream = async () => {
       try {
         allMessagesStreamRef.current = (client.conversations as any).streamAllMessages(
           async (msg: any) => {
             if (cancelled) return
-
             const content = msg.content
             if (!content || !content.type) return
             if (content.type !== 'text' && content.type !== 'markdown') return
 
             const senderInbox = (msg.senderInboxId ?? '').toLowerCase()
-            if (!senderInbox) return
-            if (senderInbox === client.inboxId?.toLowerCase()) return
+            if (!senderInbox || senderInbox === myInbox) return
 
-            // Auto-add sender as contact so they appear in the sidebar
+            // Auto-add sender as contact
             const existing = await vault.getContact(senderInbox).catch(() => undefined)
             if (!existing) {
               await vault.setContact({
@@ -54,12 +53,17 @@ export function ChatRoom() {
               })
               setContactRefreshKey(k => k + 1)
             }
+
+            // Notify MessageThread about new message for the active peer
+            if (senderInbox === selectedPeer?.toLowerCase()) {
+              setMsgPush({ peer: senderInbox, ts: Date.now() })
+            }
           },
           () => {},
-          0, // DM only
+          0,
         )
       } catch (err) {
-        console.warn('Global message stream failed:', err)
+        console.warn('Global stream failed:', err)
       }
     }
 
@@ -72,7 +76,7 @@ export function ChatRoom() {
         allMessagesStreamRef.current = null
       }
     }
-  }, [client, isConnected])
+  }, [client, isConnected, selectedPeer])
 
   if (!isWalletConnected) {
     return (
@@ -97,7 +101,6 @@ export function ChatRoom() {
 
   return (
     <div className="flex h-full">
-      {/* Left sidebar: Contact list */}
       <aside className="w-80 border-r border-[#00FFA3]/20 flex flex-col">
         <div className="p-4 border-b border-[#00FFA3]/20 space-y-3">
           <h2 className="font-bold text-lg">Contacts</h2>
@@ -109,10 +112,9 @@ export function ChatRoom() {
         </div>
       </aside>
 
-      {/* Main: Message thread */}
       <main className="flex-1">
         {selectedPeer ? (
-          <MessageThread peerAddress={selectedPeer} />
+          <MessageThread peerAddress={selectedPeer} externalPush={msgPush} />
         ) : (
           <div className="flex items-center justify-center h-full text-gray-500">
             <div className="text-center">
@@ -139,9 +141,7 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
     vault.getAllContacts().then(setContacts).catch(console.error)
   }
 
-  useEffect(() => {
-    loadContacts()
-  }, [])
+  useEffect(() => { loadContacts() }, [])
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -194,73 +194,40 @@ function NewChatInput({ onSelectContact }: { onSelectContact: (addr: string) => 
       handleSelect(matches[highlightedIndex].walletAddress)
       return
     }
-    if (isFullAddress) {
-      handleSelect(trimmed)
-    }
+    if (isFullAddress) handleSelect(trimmed)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setHighlightedIndex(prev => Math.min(prev + 1, matches.length - 1))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setHighlightedIndex(prev => Math.max(prev - 1, -1))
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      handleSubmit()
-    } else if (e.key === 'Escape') {
-      setShowDropdown(false)
-    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlightedIndex(prev => Math.min(prev + 1, matches.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlightedIndex(prev => Math.max(prev - 1, -1)) }
+    else if (e.key === 'Enter') { e.preventDefault(); handleSubmit() }
+    else if (e.key === 'Escape') { setShowDropdown(false) }
   }
 
   return (
     <div ref={wrapperRef} className="relative">
       <div className="flex gap-2">
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value)
-            setShowDropdown(true)
-            setHighlightedIndex(-1)
-          }}
-          onFocus={() => setShowDropdown(true)}
-          onKeyDown={handleKeyDown}
+        <input ref={inputRef} type="text" value={input}
+          onChange={(e) => { setInput(e.target.value); setShowDropdown(true); setHighlightedIndex(-1) }}
+          onFocus={() => setShowDropdown(true)} onKeyDown={handleKeyDown}
           placeholder="Name or last 4 digits"
-          className="flex-1 bg-[#111] border border-[#00FFA3]/30 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-[#00FFA3]"
-        />
-        <button
-          onClick={handleSubmit}
+          className="flex-1 bg-[#111] border border-[#00FFA3]/30 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-[#00FFA3]" />
+        <button onClick={handleSubmit}
           disabled={!isFullAddress && !(highlightedIndex >= 0 && highlightedIndex < matches.length)}
-          className="px-3 py-1.5 bg-[#00FFA3] text-black font-bold text-xs rounded hover:bg-[#00FFA3]/80 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
+          className="px-3 py-1.5 bg-[#00FFA3] text-black font-bold text-xs rounded hover:bg-[#00FFA3]/80 disabled:opacity-50 disabled:cursor-not-allowed">
           Chat
         </button>
       </div>
-
       {showDropdown && trimmed.length > 0 && (
         <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#1a1a1a] border border-[#00FFA3]/30 rounded max-h-48 overflow-y-auto shadow-lg">
-          {matches.length > 0 ? (
-            matches.map((contact, i) => (
-              <button
-                key={contact.walletAddress}
-                onClick={() => handleSelect(contact.walletAddress)}
-                onMouseEnter={() => setHighlightedIndex(i)}
-                className={`w-full px-3 py-2 text-left text-xs hover:bg-[#00FFA3]/10 ${
-                  i === highlightedIndex ? 'bg-[#00FFA3]/10' : ''
-                }`}
-              >
-                <div className="font-bold text-[#00FFA3]">{contact.localName}</div>
-                <div className="text-gray-400">
-                  {contact.walletAddress.slice(0, 6)}...{contact.walletAddress.slice(-4)}
-                </div>
-              </button>
-            ))
-          ) : (
-            <div className="px-3 py-2 text-xs text-gray-500">No matching contacts</div>
-          )}
+          {matches.length > 0 ? matches.map((contact, i) => (
+            <button key={contact.walletAddress} onClick={() => handleSelect(contact.walletAddress)}
+              onMouseEnter={() => setHighlightedIndex(i)}
+              className={`w-full px-3 py-2 text-left text-xs hover:bg-[#00FFA3]/10 ${i === highlightedIndex ? 'bg-[#00FFA3]/10' : ''}`}>
+              <div className="font-bold text-[#00FFA3]">{contact.localName}</div>
+              <div className="text-gray-400">{contact.walletAddress.slice(0, 6)}...{contact.walletAddress.slice(-4)}</div>
+            </button>
+          )) : <div className="px-3 py-2 text-xs text-gray-500">No matching contacts</div>}
         </div>
       )}
     </div>
